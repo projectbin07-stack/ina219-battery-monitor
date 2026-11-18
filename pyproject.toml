@@ -1,0 +1,22 @@
+# Tooling configuration for the host-side logger in tools/.
+# The firmware itself is built with PlatformIO (see platformio.ini).
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+include = ["tools/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["logger"]
+
+[tool.pytest.ini_options]
+testpaths = ["tools/tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["tools/logger.py"]

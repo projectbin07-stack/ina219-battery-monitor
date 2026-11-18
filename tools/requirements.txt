@@ -1,0 +1,2 @@
+# Runtime dependency of tools/logger.py (only the "record" sub-command needs it).
+pyserial>=3.5,<4

@@ -1,0 +1,4 @@
+# Lint and test tooling for tools/ (used by CI).
+pytest>=8,<10
+ruff>=0.6,<1
+mypy>=1.10,<2
