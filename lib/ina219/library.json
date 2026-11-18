@@ -1,0 +1,8 @@
+{
+  "name": "ina219",
+  "version": "0.1.0",
+  "description": "Thin INA219 driver on top of an abstract I2C bus interface, testable on the host with a fake bus.",
+  "license": "MIT",
+  "frameworks": "*",
+  "platforms": "*"
+}
