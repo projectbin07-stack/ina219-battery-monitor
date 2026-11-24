@@ -79,7 +79,9 @@ static void test_calibration_datasheet_example() {
   ASSERT_ENUM_EQ(PgaGain::Range320mV, c.gain);
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 20.0f, c.current_lsb_uA);
   TEST_ASSERT_FLOAT_WITHIN(1e-2f, 400.0f, c.power_lsb_uW);
-  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 655.34f, c.max_current_mA);
+  // Register range 32767 * 20 uA = 655.34 mA, but the shunt ADC clips at
+  // 320 mV / 0.5 ohm = 640 mA.
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 640.0f, c.max_current_mA);
 }
 
 // Common breakout: R = 0.1 ohm, 3.2 A.
@@ -91,7 +93,36 @@ static void test_calibration_breakout_3A2() {
   ASSERT_ENUM_EQ(PgaGain::Range320mV, c.gain);  // 0.32 V exactly
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 100.0f, c.current_lsb_uA);
   TEST_ASSERT_FLOAT_WITHIN(1e-2f, 2000.0f, c.power_lsb_uW);
-  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 3276.7f, c.max_current_mA);
+  // Register range 3276.7 mA; 320 mV / 0.1 ohm = 3200 mA.
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 3200.0f, c.max_current_mA);
+}
+
+// Audit #7 regression: the reported maximum used to be 32767 * LSB only and
+// ignored the PGA range the code selects.
+static void test_max_current_respects_pga_range() {
+  // 0.1 ohm, 400 mA -> 40 mV range: clips at 400 mA (was reported as 655.3).
+  Calibration c = computeCalibration(100000UL, 400UL);
+  ASSERT_ENUM_EQ(PgaGain::Range40mV, c.gain);
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 400.0f, c.max_current_mA);
+  // 0.075 ohm, 2 A -> 160 mV range: clips at 2133.3 mA (was 3277.5).
+  c = computeCalibration(75000UL, 2000UL);
+  ASSERT_ENUM_EQ(PgaGain::Range160mV, c.gain);
+  TEST_ASSERT_FLOAT_WITHIN(0.1f, 2133.3f, c.max_current_mA);
+  // 0.1 ohm, 1 A -> 160 mV range: 1600 mA (was 1638.3).
+  c = computeCalibration(100000UL, 1000UL);
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 1600.0f, c.max_current_mA);
+  // Small shunt: the current register is the limit. 0.01 ohm, 100 uA LSB,
+  // 320 mV: register 3276.7 mA, ADC 32 A -> 3276.7 mA.
+  TEST_ASSERT_FLOAT_WITHIN(1e-1f, 3276.7f,
+                           maxMeasurableCurrent_mA(10000UL, 100.0f, PgaGain::Range320mV));
+  // Large shunt: the ADC is the limit. 10 ohm, 10 uA LSB, 320 mV: register
+  // 327.67 mA, ADC 32 mA -> 32 mA.
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 32.0f,
+                           maxMeasurableCurrent_mA(10000000UL, 10.0f, PgaGain::Range320mV));
+  // calibrationFromLsb() leaves the PGA at 320 mV and reports against it.
+  c = calibrationFromLsb(100000UL, 20000UL);
+  ASSERT_ENUM_EQ(PgaGain::Range320mV, c.gain);
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 655.34f, c.max_current_mA);
 }
 
 // R = 0.1 ohm, 1 A: min LSB 30.52 uA -> 50 uA; Cal = 0.04096 / 5e-6 = 8192;
@@ -248,5 +279,6 @@ int main(int, char**) {
   RUN_TEST(test_current_and_power_datasheet_example);
   RUN_TEST(test_current_sign_and_scaling);
   RUN_TEST(test_power_saturates);
+  RUN_TEST(test_max_current_respects_pga_range);
   return UNITY_END();
 }

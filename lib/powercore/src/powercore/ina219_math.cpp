@@ -78,6 +78,15 @@ uint32_t shuntFullScale_uV(PgaGain gain) {
   return 40000UL << static_cast<uint8_t>(gain);
 }
 
+float maxMeasurableCurrent_mA(uint32_t shunt_uohm, float current_lsb_uA, PgaGain gain) {
+  const float register_mA = 32767.0f * current_lsb_uA / 1000.0f;
+  if (shunt_uohm == 0) return register_mA;
+  // uV / micro-ohm = A; * 1000 -> mA.
+  const float adc_mA =
+      static_cast<float>(shuntFullScale_uV(gain)) * 1000.0f / static_cast<float>(shunt_uohm);
+  return adc_mA < register_mA ? adc_mA : register_mA;
+}
+
 uint32_t roundUpTo125(uint32_t value) {
   if (value <= 1UL) return 1UL;
   uint32_t decade = 1UL;
@@ -112,7 +121,7 @@ Calibration calibrationFromLsb(uint32_t shunt_uohm, uint32_t current_lsb_nA) {
   c.current_lsb_uA = kCalNumeratorMicroAmp /
                      (static_cast<float>(c.cal_register) * static_cast<float>(shunt_uohm));
   c.power_lsb_uW = 20.0f * c.current_lsb_uA;
-  c.max_current_mA = 32767.0f * c.current_lsb_uA / 1000.0f;
+  c.max_current_mA = maxMeasurableCurrent_mA(shunt_uohm, c.current_lsb_uA, c.gain);
   return c;
 }
 
@@ -136,6 +145,7 @@ Calibration computeCalibration(uint32_t shunt_uohm, uint32_t max_expected_mA) {
   Calibration c = calibrationFromLsb(shunt_uohm, roundUpTo125(static_cast<uint32_t>(lsb_nA)));
   if (c.status == CalStatus::Ok) {
     c.gain = gainForShuntVoltage(static_cast<uint32_t>(shunt_uV));
+    c.max_current_mA = maxMeasurableCurrent_mA(shunt_uohm, c.current_lsb_uA, c.gain);
   }
   return c;
 }

@@ -87,8 +87,17 @@ struct Calibration {
   uint32_t nominal_lsb_nA;  // current LSB that was asked for before truncation
   float current_lsb_uA;     // effective current LSB after truncating the register
   float power_lsb_uW;       // always 20 * current LSB
-  float max_current_mA;     // 32767 * current LSB: largest representable current
+  // Largest current the configuration can measure:
+  //   min(32767 * current LSB, PGA full-scale shunt voltage / shunt).
+  // The first term is the current register's range; the second is where the
+  // shunt ADC clips. With a PGA range chosen close to shunt * max current the
+  // second term is usually the smaller one (0.1 ohm, 400 mA: 400.0 mA, not
+  // the 655.3 mA the register alone could hold).
+  float max_current_mA;
 };
+
+// max_current_mA for a calibration's shunt, current LSB and PGA gain.
+float maxMeasurableCurrent_mA(uint32_t shunt_uohm, float current_lsb_uA, PgaGain gain);
 
 // Round up to the next value of the 1-2-5 series (1, 2, 5, 10, 20, 50, ...).
 uint32_t roundUpTo125(uint32_t value);
