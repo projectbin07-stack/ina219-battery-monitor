@@ -183,12 +183,18 @@ void sampleOnce(uint32_t now_ms) {
     if (reading.overflow) flags |= powercore::kFlagOverflow;
     if (!reading.ready) flags |= powercore::kFlagNotReady;
 
-    // Current and power are meaningless while OVF is set, so leave them out of
-    // the integration; the voltage is still good.
-    if (!reading.overflow) {
+    // Current and power are meaningless while OVF is set. The span around an
+    // OVF sample is treated as a gap (not integrated, counted, integrator
+    // re-seeded by the next good sample) rather than bridged with the last
+    // good current, and it also restarts the SoC rest timer. The voltage is
+    // still good.
+    if (reading.overflow) {
+      g_counter.markGap();
+      g_soc.breakRest();
+    } else {
       g_counter.update(now_ms, current, power);
       g_soc.update(static_cast<float>(reading.bus_mV), static_cast<float>(current) / 1000.0f,
-                   g_counter.lastDelta_mAh());
+                   g_counter.lastDelta_mAh(), g_counter.lastInterval_ms());
     }
     g_cutoff.update(reading.bus_mV);
 

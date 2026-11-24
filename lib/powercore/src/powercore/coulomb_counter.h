@@ -30,6 +30,13 @@ class CoulombCounter {
   // integrator is re-seeded from the new sample.
   bool update(uint32_t now_ms, int32_t current_uA, int32_t power_uW);
 
+  // Declare that a sample was taken but its current is unusable (for example
+  // the INA219 OVF flag was set). The interval around it is not integrated:
+  // the integrator is re-seeded by the next good sample and the gap is counted
+  // in gapCount(). Without this, the next good sample would bridge the whole
+  // span with the last good current.
+  void markGap();
+
   // Net charge in microamp-milliseconds and energy in microwatt-milliseconds.
   int64_t charge_uAms() const { return charge2_ / 2; }
   int64_t energy_uWms() const { return energy2_ / 2; }
@@ -43,6 +50,10 @@ class CoulombCounter {
   // Charge added by the most recent update() call, in mAh (0 if it was skipped).
   float lastDelta_mAh() const;
 
+  // Length of the interval integrated by the most recent update() call, in ms
+  // (0 if it only seeded the integrator or was skipped as a gap).
+  uint32_t lastInterval_ms() const { return last_interval_ms_; }
+
   uint16_t gapCount() const { return gap_count_; }
   bool seeded() const { return seeded_; }
 
@@ -53,6 +64,7 @@ class CoulombCounter {
   int64_t energy2_;
   int64_t last_delta2_;
   uint32_t max_gap_ms_;
+  uint32_t last_interval_ms_;
   uint32_t prev_ms_;
   int32_t prev_current_uA_;
   int32_t prev_power_uW_;

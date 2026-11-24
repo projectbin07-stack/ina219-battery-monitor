@@ -175,6 +175,37 @@ static void test_integer_views_saturate() {
   TEST_ASSERT_FLOAT_WITHIN(1e3f, -1e9f, c.energy_mWh());
 }
 
+static void test_overflow_span_is_a_gap_not_bridged() {
+  // Audit repro: 100 mA, 2 A (OVF), 2 A (OVF), 100 mA at 500 ms. Before
+  // markGap() existed the firmware skipped the OVF samples and the next good
+  // sample bridged 0.5 s .. 2.0 s with 100 mA (55 uAh in total). Now only the
+  // first, fully valid interval is integrated and the span is counted.
+  CoulombCounter c(2000);
+  TEST_ASSERT_FALSE(c.update(0, 100000, 0));
+  TEST_ASSERT_EQUAL_UINT32(0, c.lastInterval_ms());
+  TEST_ASSERT_TRUE(c.update(500, 100000, 0));
+  TEST_ASSERT_EQUAL_UINT32(500, c.lastInterval_ms());
+  c.markGap();  // t = 1000 ms, OVF
+  TEST_ASSERT_EQUAL_UINT32(0, c.lastInterval_ms());
+  TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, c.lastDelta_mAh());
+  c.markGap();  // t = 1500 ms, OVF: same span, counted once
+  TEST_ASSERT_EQUAL_UINT16(1, c.gapCount());
+  TEST_ASSERT_FALSE(c.seeded());
+  TEST_ASSERT_FALSE(c.update(2000, 100000, 0));  // re-seeds only
+  TEST_ASSERT_TRUE(c.charge_uAms() == 50000000LL);  // 100 mA * 0.5 s
+  TEST_ASSERT_EQUAL_INT32(13, c.charge_uAh());
+  TEST_ASSERT_TRUE(c.update(2500, 100000, 0));
+  TEST_ASSERT_TRUE(c.charge_uAms() == 100000000LL);
+  TEST_ASSERT_EQUAL_UINT16(1, c.gapCount());
+}
+
+static void test_mark_gap_before_seed_is_not_counted() {
+  CoulombCounter c;
+  c.markGap();
+  TEST_ASSERT_EQUAL_UINT16(0, c.gapCount());
+  TEST_ASSERT_FALSE(c.update(0, 1000, 0));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_first_sample_only_seeds);
@@ -191,5 +222,7 @@ int main(int, char**) {
   RUN_TEST(test_zero_interval_adds_nothing);
   RUN_TEST(test_reset);
   RUN_TEST(test_integer_views_saturate);
+  RUN_TEST(test_overflow_span_is_a_gap_not_bridged);
+  RUN_TEST(test_mark_gap_before_seed_is_not_counted);
   return UNITY_END();
 }

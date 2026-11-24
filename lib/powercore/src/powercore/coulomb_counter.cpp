@@ -21,6 +21,7 @@ CoulombCounter::CoulombCounter(uint32_t max_gap_ms)
       energy2_(0),
       last_delta2_(0),
       max_gap_ms_(max_gap_ms),
+      last_interval_ms_(0),
       prev_ms_(0),
       prev_current_uA_(0),
       prev_power_uW_(0),
@@ -31,13 +32,23 @@ void CoulombCounter::reset() {
   charge2_ = 0;
   energy2_ = 0;
   last_delta2_ = 0;
+  last_interval_ms_ = 0;
   gap_count_ = 0;
+  seeded_ = false;
+}
+
+void CoulombCounter::markGap() {
+  last_delta2_ = 0;
+  last_interval_ms_ = 0;
+  // Count each unusable span once, however many unusable samples it has.
+  if (seeded_ && gap_count_ != 0xFFFFu) ++gap_count_;
   seeded_ = false;
 }
 
 bool CoulombCounter::update(uint32_t now_ms, int32_t current_uA, int32_t power_uW) {
   bool integrated = false;
   last_delta2_ = 0;
+  last_interval_ms_ = 0;
   if (seeded_) {
     const uint32_t dt = now_ms - prev_ms_;  // modulo 2^32: wraparound-safe
     if (dt > max_gap_ms_) {
@@ -47,6 +58,7 @@ bool CoulombCounter::update(uint32_t now_ms, int32_t current_uA, int32_t power_u
       last_delta2_ = (static_cast<int64_t>(prev_current_uA_) + current_uA) * dt64;
       charge2_ += last_delta2_;
       energy2_ += (static_cast<int64_t>(prev_power_uW_) + power_uW) * dt64;
+      last_interval_ms_ = dt;
       integrated = true;
     }
   }
