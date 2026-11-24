@@ -33,15 +33,17 @@ SocConfig liIon1SConfig(float capacity_mAh) {
   c.series_cells = 1;
   c.capacity_mAh = capacity_mAh;
   c.rest_current_mA = 20.0f;
-  c.rest_blend = 0.02f;
+  c.rest_min_s = 60.0f;
+  c.rest_tau_s = 600.0f;
   return c;
 }
 
 SocEstimator::SocEstimator(const SocConfig& config)
-    : config_(config), percent_(0.0f), seeded_(false) {}
+    : config_(config), percent_(0.0f), rest_ms_(0), seeded_(false) {}
 
 void SocEstimator::reset() {
   percent_ = 0.0f;
+  rest_ms_ = 0;
   seeded_ = false;
 }
 
@@ -55,17 +57,38 @@ void SocEstimator::seedFromVoltage(float pack_mV) {
   seeded_ = true;
 }
 
-float SocEstimator::update(float pack_mV, float current_mA, float discharged_mAh) {
+float SocEstimator::update(float pack_mV, float current_mA, float discharged_mAh,
+                          uint32_t dt_ms) {
   if (!seeded_) {
     seedFromVoltage(pack_mV);
+    rest_ms_ = 0;
     return percent_;
   }
   if (config_.capacity_mAh > 0.0f) {
     percent_ -= 100.0f * discharged_mAh / config_.capacity_mAh;
   }
   const float magnitude = current_mA < 0.0f ? -current_mA : current_mA;
-  if (magnitude <= config_.rest_current_mA) {
-    percent_ += config_.rest_blend * (voltageEstimate(pack_mV) - percent_);
+  if (magnitude > config_.rest_current_mA) {
+    rest_ms_ = 0;
+  } else if (dt_ms > 0) {
+    // Rest time before this interval; only the part of the interval beyond the
+    // minimum rest contributes to the blend.
+    const float min_ms = config_.rest_min_s > 0.0f ? config_.rest_min_s * 1000.0f : 0.0f;
+    const float before_ms = static_cast<float>(rest_ms_);
+    rest_ms_ = (0xFFFFFFFFUL - rest_ms_ < dt_ms) ? 0xFFFFFFFFUL : rest_ms_ + dt_ms;
+    const float after_ms = static_cast<float>(rest_ms_);
+    if (after_ms > min_ms) {
+      const float eligible_ms = before_ms >= min_ms ? static_cast<float>(dt_ms) : after_ms - min_ms;
+      float fraction = 1.0f;
+      if (config_.rest_tau_s > 0.0f) {
+        const float tau_ms = config_.rest_tau_s * 1000.0f;
+        // Backward-Euler first-order step dt / (tau + dt): unconditionally
+        // stable, and its time to 63 % is tau * (1 + dt / 2 tau) to first
+        // order, i.e. within 0.05 % of tau for dt <= 500 ms and tau = 600 s.
+        fraction = eligible_ms / (tau_ms + eligible_ms);
+      }
+      percent_ += fraction * (voltageEstimate(pack_mV) - percent_);
+    }
   }
   if (percent_ < 0.0f) percent_ = 0.0f;
   if (percent_ > 100.0f) percent_ = 100.0f;

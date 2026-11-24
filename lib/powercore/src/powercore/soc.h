@@ -30,10 +30,19 @@ struct SocConfig {
   uint8_t series_cells;    // pack voltage is divided by this
   float capacity_mAh;      // usable capacity
   float rest_current_mA;   // |I| at or below this counts as "resting"
-  float rest_blend;        // 0..1 pull towards the voltage estimate per resting update
+  float rest_min_s;        // continuous rest needed before the voltage is trusted
+  float rest_tau_s;        // time constant of the pull towards the voltage estimate
 };
 
-// Defaults for one Li-ion cell: rest threshold 20 mA, blend 0.02 per update.
+// Defaults for one Li-ion cell: rest threshold 20 mA, minimum rest 60 s,
+// time constant 600 s.
+//
+// The blend is defined in time, not per sample, so the result does not depend
+// on the sample rate: after `rest_min_s` of continuous rest, the gap between
+// the estimate and the voltage curve shrinks by 63 % every `rest_tau_s`
+// seconds whether the firmware samples every 20 ms or every 500 ms. The 60 s /
+// 600 s values are a judgement call (terminal voltage recovers over minutes
+// after a load step), not values fitted to a measured cell.
 SocConfig liIon1SConfig(float capacity_mAh);
 
 class SocEstimator {
@@ -50,14 +59,24 @@ class SocEstimator {
   //   pack_mV         terminal voltage of the whole pack
   //   current_mA      positive = discharge
   //   discharged_mAh  charge drawn since the previous call (negative = charged)
+  //   dt_ms           time since the previous call (0 if unknown or a gap)
   //
-  // Coulomb counting moves the estimate by discharged/capacity. While the
-  // current is at or below the rest threshold the terminal voltage is close to
-  // the open-circuit voltage, so the estimate is additionally pulled towards
-  // the curve value by `rest_blend`. Under load the voltage is ignored because
-  // the drop across the cell's internal resistance would read as lost charge.
+  // Coulomb counting moves the estimate by discharged/capacity. Once the
+  // current has stayed at or below the rest threshold for `rest_min_s`, the
+  // terminal voltage is close to the open-circuit voltage, so the estimate is
+  // additionally pulled towards the curve value with the fraction
+  // dt / (rest_tau_s + dt) per call, i.e. a first-order filter with time
+  // constant rest_tau_s. Under load the voltage is ignored because the drop
+  // across the cell's internal resistance would read as lost charge.
   // Returns percent, clamped to 0..100.
-  float update(float pack_mV, float current_mA, float discharged_mAh);
+  float update(float pack_mV, float current_mA, float discharged_mAh, uint32_t dt_ms);
+
+  // Restart the rest timer, e.g. after a sample whose current is unknown
+  // (overflow) and so cannot be assumed to be at rest.
+  void breakRest() { rest_ms_ = 0; }
+
+  // Milliseconds of continuous rest seen so far (saturates).
+  uint32_t restTime_ms() const { return rest_ms_; }
 
   float percent() const { return percent_; }
   bool seeded() const { return seeded_; }
@@ -67,6 +86,7 @@ class SocEstimator {
 
   SocConfig config_;
   float percent_;
+  uint32_t rest_ms_;
   bool seeded_;
 };
 
