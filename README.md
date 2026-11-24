@@ -31,10 +31,13 @@ host-side unit tests, and keeps the Arduino-specific part down to one file.
   automatic PGA range selection, conversion of every result register, and the
   conversion-ready (CNVR) and math-overflow (OVF) flags.
 - **Coulomb counter**: mAh and mWh by trapezoidal integration in 64-bit
-  integers; handles the 49.7-day `millis()` wraparound and skips gaps.
+  integers; handles the 49.7-day `millis()` wraparound and skips gaps,
+  including the span around samples with the OVF flag set.
 - **State of charge**: voltage lookup curve with linear interpolation, blended
-  with coulomb counting. An approximate 1S Li-ion table is included and the
-  curve is replaceable.
+  with coulomb counting through a first-order filter defined in time (60 s
+  minimum rest, 600 s time constant), so the result does not depend on the
+  sample rate. An approximate 1S Li-ion table is included and the curve is
+  replaceable.
 - **Filters**: moving average and exponential moving average.
 - **Low-voltage cutoff** state machine with hysteresis and debounce, with an
   optional GPIO output for a load switch.
@@ -120,16 +123,27 @@ arithmetic so that the result is the same on every platform:
    so the conversion does not carry the truncation error.
 5. Picks the smallest PGA range (40 / 80 / 160 / 320 mV) that covers
    `R_shunt * I_max`, for the best shunt-voltage resolution.
+6. Reports the largest measurable current as
+   `min(32767 * Current_LSB, PGA_full_scale / R_shunt)`. The first term is the
+   range of the current register; the second is where the shunt ADC clips. With
+   the PGA chosen in step 5 the second term is usually the limit, and it can be
+   as low as the `I_max` you asked for, so leave some margin when choosing it.
 
 Worked examples (these are asserted in `test/test_ina219_math`):
 
-| Shunt | Max current | Current LSB | Cal register | PGA range | Largest reading |
+| Shunt | Max current | Current LSB | Cal register | PGA range | Largest measurable current |
 | --- | --- | --- | --- | --- | --- |
-| 0.1 ohm | 3.2 A | 100 uA | 4096 | 320 mV | 3.2767 A |
-| 0.1 ohm | 1 A | 50 uA | 8192 | 160 mV | 1.638 A |
-| 0.1 ohm | 0.4 A | 20 uA | 20480 | 40 mV | 0.655 A |
-| 0.5 ohm | 0.6 A | 20 uA | 4096 | 320 mV | 0.655 A (datasheet example) |
-| 0.075 ohm | 2 A | 100.024 uA (after truncation) | 5460 | 160 mV | 3.277 A |
+| 0.1 ohm | 3.2 A | 100 uA | 4096 | 320 mV | 3.200 A |
+| 0.1 ohm | 1 A | 50 uA | 8192 | 160 mV | 1.600 A |
+| 0.1 ohm | 0.4 A | 20 uA | 20480 | 40 mV | 0.400 A |
+| 0.5 ohm | 0.6 A | 20 uA | 4096 | 320 mV | 0.640 A (datasheet example) |
+| 0.075 ohm | 2 A | 100.024 uA (after truncation) | 5460 | 160 mV | 2.133 A |
+
+Up to 0.1.0 this column, and the `max_mA` in the `CAL` reply, showed
+`32767 * Current_LSB` only (3.277, 1.638, 0.655, 0.655 and 3.277 A for the
+rows above), which overstated the range by up to 64 % because the chip's shunt
+ADC clips first. Whether the INA219 also raises OVF when the shunt ADC clips
+has not been checked on a device.
 
 Defaults live in [`include/config.h`](include/config.h): `BM_SHUNT_UOHM`
 (100 000 micro-ohm) and `BM_MAX_CURRENT_MA` (3200). They can be changed at run
@@ -295,7 +309,7 @@ decoders accept either case.
 
 | Bit | Value | Name | Meaning |
 | --- | --- | --- | --- |
-| 0 | 1 | overflow | INA219 OVF was set: current and power are not valid and were not integrated |
+| 0 | 1 | overflow | INA219 OVF was set: current and power are not valid. The span from the last good sample to the next good one is not integrated (counted as a gap), so `charge_uAh` and `energy_uWh` under-read by whatever was drawn during it |
 | 1 | 2 | not-ready | INA219 CNVR was not set: no new conversion since the previous read |
 | 2 | 4 | sensor-error | I2C transaction failed: measurement fields are zero |
 | 3 | 8 | cutoff | low-voltage cutoff is tripped |
@@ -315,7 +329,7 @@ Send a line terminated by CR, LF or both. Keywords are case-insensitive.
 | --- | --- | --- |
 | `RESET` | clear the mAh / mWh counters, re-seed the state of charge from the voltage, release the cutoff | `#OK RESET` |
 | `RATE <ms>` | sample period, 20 to 60000 ms | `#OK RATE <ms>` |
-| `CAL <shunt_mohm> <max_A>` | shunt resistance in milliohms and maximum expected current in amps, up to three decimals each, e.g. `CAL 100 3.2` or `CAL 2.5 20` | `#OK CAL reg=<cal> lsb_uA=<lsb> max_mA=<range>` |
+| `CAL <shunt_mohm> <max_A>` | shunt resistance in milliohms and maximum expected current in amps, up to three decimals each, e.g. `CAL 100 3.2` or `CAL 2.5 20` | `#OK CAL reg=<cal> lsb_uA=<lsb> max_mA=<range>`, where `<range>` is the largest measurable current, `min(32767 * LSB, PGA full scale / shunt)` |
 
 Anything else gets `#ERR expected RESET | RATE <ms> | CAL <shunt_mohm> <max_A>`.
 A `CAL` pair the chip cannot handle is rejected with `#ERR CAL status=<n>` and
@@ -387,9 +401,23 @@ Design notes:
 - **Wraparound** is handled by unsigned subtraction of timestamps. An interval
   longer than the configured maximum gap (four sample periods, at least 2 s) is
   not integrated; that also covers a clock that appears to step backwards.
-- **State of charge** uses the voltage curve only while the current is below a
-  rest threshold (20 mA by default), because under load the voltage sags by the
-  cell's internal resistance. Under load it relies on coulomb counting alone.
+  A sample with OVF set is also treated as a gap: up to 0.1.0 the next good
+  sample bridged the whole overflow span with the last good current (100 mA,
+  2 A, 2 A, 100 mA at 500 ms integrated 55 uAh where the true current gives
+  583 uAh); now the span is skipped and counted (13.9 uAh, the first interval
+  only), so the error is a visible gap rather than a hidden wrong value.
+- **State of charge** uses the voltage curve only after the current has stayed
+  at or below a rest threshold (20 mA) for a minimum rest time (60 s), because
+  under load, and for a while after it, the voltage differs from the
+  open-circuit voltage. While resting, the estimate moves towards the curve
+  value as a first-order filter with time constant `rest_tau_s` (600 s): each
+  sample applies the fraction `dt / (tau + dt)`, so 63 % of the gap is closed
+  600 s after the minimum rest whether the firmware samples every 20 ms or
+  every 2 s. Up to 0.1.0 the blend was a fixed 0.02 per sample, which closed
+  63 % of the gap in 1.0 s at `RATE 20` and 24.7 s at the default 500 ms, so on
+  a sleeping node at a fast rate the voltage curve overrode coulomb counting
+  almost immediately. The 60 s / 600 s values are a judgement call, not fitted
+  to a measured cell; change them in `liIon1SConfig()` (`soc.cpp`).
 - **The calibration register is volatile.** The firmware checks it every 16
   samples and reprograms the chip if it has been lost (for example after a
   brown-out on the sensor's supply).
@@ -409,7 +437,10 @@ What the tests cover:
   2 mOhm shunt, current 0x2710 = 10 A, power 0x1766 = 119.8 W).
 - Coulomb counter: exact 1 A x 1 h = 1000 mAh, linear ramps, sign changes,
   `millis()` wraparound, gaps, backwards time, saturation.
-- State of charge: interpolation points, blending arithmetic, clamping.
+- State of charge: interpolation points, blending arithmetic, clamping, the
+  same 63 % time (660 s including the minimum rest, within 1 %) at 20, 100,
+  500 and 2000 ms sample periods, no blend before the minimum rest, and the
+  rest timer restarting under load.
 - Cutoff: trip / release sequences, no chatter inside the hysteresis band.
 - Telemetry: CRC vectors, encoder output, decoder rejection of every
   single-bit corruption of a sample frame, range and structure errors.
@@ -446,7 +477,10 @@ is very welcome and this section will be updated accordingly.
 ## Known limitations
 
 - Not hardware-validated yet (above).
-- The Li-ion voltage curve is approximate and generic. Real cells differ with
+- The Li-ion voltage curve is approximate and generic, and it disagrees with
+  the curve in the companion `solar-node-sizer` by up to 32 points (3.69 V:
+  10 % here, 42 % there). Neither table is from a cited measurement; which is
+  closer for a given cell is unknown. Real cells differ with
   chemistry variant, age, temperature and load. The state of charge is an
   indication, not a fuel gauge. The first estimate after power-up or `RESET`
   comes from the voltage at that moment and is off if the battery is under

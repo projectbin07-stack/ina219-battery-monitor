@@ -6,7 +6,7 @@
 // with the CAL and RATE serial commands (not persisted across resets).
 #pragma once
 
-#define BM_FIRMWARE_VERSION "0.1.0"
+#define BM_FIRMWARE_VERSION "0.2.0"
 
 // ---- Serial ---------------------------------------------------------------
 #ifndef BM_SERIAL_BAUD

@@ -1,6 +1,6 @@
 {
   "name": "powercore",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hardware-independent power-monitor maths: INA219 register conversions, coulomb counting, state of charge, filters, low-voltage cutoff, telemetry frames.",
   "license": "MIT",
   "frameworks": "*",
