@@ -206,28 +206,28 @@ overridden with `-D` flags in `platformio.ini`:
 
 ### Nano memory
 
-Sizes reported by PlatformIO in CI for v0.1.0:
+Sizes reported by PlatformIO in CI for v0.2.0:
 
 | Environment | Flash | Static RAM |
 | --- | --- | --- |
-| `esp32dev` | 306 065 of 1 310 720 bytes (23.4 %) | 22 200 of 327 680 bytes (6.8 %) |
-| `nanoatmega328` (OLED) | 25 538 of 30 720 bytes (83.1 %) | 802 of 2 048 bytes (39.2 %) |
-| `nanoatmega328_serial` | 15 334 of 30 720 bytes (49.9 %) | 660 of 2 048 bytes (32.2 %) |
+| `esp32dev` | 306 413 of 1 310 720 bytes (23.4 %) | 22 208 of 327 680 bytes (6.8 %) |
+| `nanoatmega328` (OLED) | 26 316 of 30 720 bytes (85.7 %) | 814 of 2 048 bytes (39.7 %) |
+| `nanoatmega328_serial` | 16 102 of 30 720 bytes (52.4 %) | 672 of 2 048 bytes (32.8 %) |
 
-These are build-time numbers from the first green CI run of this code
-([run 44262392865](https://github.com/projectbin07-stack/ina219-battery-monitor/actions/runs/44262392865)),
+These are build-time numbers from CI
+([run 45411940606](https://github.com/projectbin07-stack/ina219-battery-monitor/actions/runs/45411940606)),
 not measurements on a device.
 
 The OLED build **fits the Nano's flash**, but RAM is marginal: the "static RAM"
 column does not include the SSD1306 frame buffer, which the display library
 allocates from the heap at start-up (128 x 64 / 8 = 1 024 bytes). That leaves
-roughly 2 048 - 802 - 1 024 = 222 bytes for the stack and everything else,
+roughly 2 048 - 814 - 1 024 = 210 bytes for the stack and everything else,
 and the sampling path alone puts a 104-byte frame buffer on the stack. Whether
 that is enough has not been checked on a real board. If the allocation fails
 the firmware prints `#WARN OLED init failed, continuing without display` and
 carries on serial-only, but a stack overflow would not announce itself. Until
 this has been tested on hardware, treat `nanoatmega328` as experimental and
-prefer **`nanoatmega328_serial`** on the Nano (about 1 388 bytes free) or use
+prefer **`nanoatmega328_serial`** on the Nano (about 1 376 bytes free) or use
 an ESP32 when you want the display.
 
 ## Quick start
@@ -501,7 +501,7 @@ is very welcome and this section will be updated accordingly.
 - The firmware samples by polling in `loop()`; redrawing the OLED over I2C
   takes tens of milliseconds, so very short `RATE` values will jitter on the
   OLED builds.
-- On the Nano the OLED build leaves only about 222 bytes of RAM for the stack
+- On the Nano the OLED build leaves only about 210 bytes of RAM for the stack
   (see [Nano memory](#nano-memory)); it is unverified and may be unstable.
 - One INA219 per node.
 
